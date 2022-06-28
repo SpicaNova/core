@@ -19,9 +19,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/auth"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/vesting"
-	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 	authzmodule "github.com/cosmos/cosmos-sdk/x/authz/module"
 	"github.com/cosmos/cosmos-sdk/x/bank"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -38,8 +36,6 @@ import (
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/cosmos/cosmos-sdk/x/slashing"
 	"github.com/cosmos/cosmos-sdk/x/staking"
-	"github.com/cosmos/cosmos-sdk/x/staking/teststaking"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/cosmos/cosmos-sdk/x/upgrade"
 
 	ica "github.com/cosmos/ibc-go/v3/modules/apps/27-interchain-accounts"
@@ -230,74 +226,4 @@ func TestGetKey(t *testing.T) {
 	require.NotEmpty(t, app.GetKey(banktypes.StoreKey))
 	require.NotEmpty(t, app.GetTKey(paramstypes.TStoreKey))
 	require.NotEmpty(t, app.GetMemKey(capabilitytypes.MemStoreKey))
-}
-
-func TestSimAppEnforceStakingForVestingTokens(t *testing.T) {
-	genAccounts := authtypes.GenesisAccounts{
-		vestingtypes.NewContinuousVestingAccount(
-			authtypes.NewBaseAccountWithAddress(addr1),
-			sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(2_500_000_000_000))),
-			1660000000,
-			1670000000,
-		),
-		vestingtypes.NewContinuousVestingAccount(
-			authtypes.NewBaseAccountWithAddress(addr2),
-			sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(4_500_000_000_000))),
-			1660000000,
-			1670000000,
-		),
-		authtypes.NewBaseAccountWithAddress(addr3),
-		authtypes.NewBaseAccountWithAddress(addr4),
-	}
-	app := SetupWithGenesisAccounts(genAccounts, []banktypes.Balance{
-		{
-			Address: addr1.String(),
-			Coins:   sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(2_500_000_000_000))),
-		},
-		{
-			Address: addr2.String(),
-			Coins:   sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(4_500_000_000_000))),
-		},
-		{
-			Address: addr3.String(),
-			Coins:   sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(1_000_000))),
-		},
-		{
-			Address: addr4.String(),
-			Coins:   sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(1_000_000))),
-		},
-	}...)
-
-	ctx := app.NewContext(true, tmproto.Header{Height: app.LastBlockHeight()})
-
-	genesisState := make(GenesisState)
-	genesisState[authtypes.ModuleName] = app.appCodec.MustMarshalJSON(authtypes.NewGenesisState(authtypes.DefaultParams(), genAccounts))
-
-	tstaking := teststaking.NewHelper(t, ctx, app.StakingKeeper)
-
-	// create validator with 10% commission
-	pubkeys := simapp.CreateTestPubKeys(2)
-	valAddrs := simapp.ConvertAddrsToValAddrs([]sdk.AccAddress{addr3, addr4})
-	tstaking.Commission = stakingtypes.NewCommissionRates(sdk.NewDecWithPrec(1, 1), sdk.NewDecWithPrec(2, 1), sdk.NewDec(0))
-	tstaking.CreateValidator(sdk.ValAddress(addr3), pubkeys[0], sdk.NewInt(1_000_000), true)
-	tstaking.CreateValidator(sdk.ValAddress(addr4), pubkeys[1], sdk.NewInt(1_000_000), true)
-	vals := []stakingtypes.ValidatorI{app.StakingKeeper.Validator(ctx, valAddrs[0]), app.StakingKeeper.Validator(ctx, valAddrs[1])}
-	require.NotNil(t, vals[0])
-	require.NotNil(t, vals[1])
-
-	app.enforceStakingForVestingTokens(ctx, genesisState)
-	delegations := app.StakingKeeper.GetAllDelegations(ctx)
-	sharePerValidators := make(map[string]sdk.Dec)
-
-	for _, del := range delegations {
-		if val, found := sharePerValidators[del.ValidatorAddress]; !found {
-			sharePerValidators[del.ValidatorAddress] = del.GetShares()
-		} else {
-			sharePerValidators[del.ValidatorAddress] = val.Add(del.GetShares())
-		}
-	}
-
-	for _, share := range sharePerValidators {
-		require.Equal(t, sdk.NewDec(3_500_001_000_000), share)
-	}
 }

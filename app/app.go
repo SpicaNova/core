@@ -36,7 +36,6 @@ import (
 	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/vesting"
-	vestingexported "github.com/cosmos/cosmos-sdk/x/auth/vesting/exported"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 	"github.com/cosmos/cosmos-sdk/x/authz"
 	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
@@ -710,9 +709,6 @@ func (app *TerraApp) InitChainer(ctx sdk.Context, req abci.RequestInitChain) abc
 	app.UpgradeKeeper.SetModuleVersionMap(ctx, app.mm.GetVersionMap())
 	res := app.mm.InitGenesis(ctx, app.appCodec, genesisState)
 
-	// stake all vesting tokens
-	app.enforceStakingForVestingTokens(ctx, genesisState)
-
 	return res
 }
 
@@ -829,7 +825,7 @@ func (app *TerraApp) RegisterTendermintService(clientCtx client.Context) {
 func (app *TerraApp) RegisterUpgradeHandlers(_ module.Configurator) {
 	app.UpgradeKeeper.SetUpgradeHandler(
 		UpgradeName,
-		app.CreateUpgradeHandler(),
+		NewUpgradeHandler(app).CreateUpgradeHandler(),
 	)
 
 	upgradeInfo, err := app.UpgradeKeeper.ReadUpgradeInfoFromDisk()
@@ -889,79 +885,4 @@ func initParamsKeeper(appCodec codec.BinaryCodec, legacyAmino *codec.LegacyAmino
 	paramsKeeper.Subspace(antetypes.ModuleName)
 
 	return paramsKeeper
-}
-
-// enforceStakingForVestingTokens enforce vesting tokens to be staked
-// CONTRACT: validator's gentx account must not be a vesting account
-func (app *TerraApp) enforceStakingForVestingTokens(ctx sdk.Context, genesisState GenesisState) {
-
-	var authState authtypes.GenesisState
-	app.appCodec.MustUnmarshalJSON(genesisState[authtypes.ModuleName], &authState)
-
-	allValidators := app.StakingKeeper.GetAllValidators(ctx)
-
-	// Filter out validators which have huge max commission than 20%
-	var validators []stakingtypes.Validator
-	maxCommissionCondition := sdk.NewDecWithPrec(20, 2)
-	for _, val := range allValidators {
-		if val.Commission.CommissionRates.MaxRate.LTE(maxCommissionCondition) {
-			validators = append(validators, val)
-		}
-	}
-
-	validatorLen := len(validators)
-
-	// ignore when validator len is zero
-	if validatorLen == 0 {
-		return
-	}
-
-	i := 0
-	stakeSplitCondition := sdk.NewInt(1_000_000_000_000)
-	powerReduction := app.StakingKeeper.PowerReduction(ctx)
-	for _, acc := range authState.GetAccounts() {
-		var account authtypes.AccountI
-		if err := app.InterfaceRegistry().UnpackAny(acc, &account); err != nil {
-			panic(err)
-		}
-
-		if vestingAcc, ok := account.(vestingexported.VestingAccount); ok {
-			amt := vestingAcc.GetOriginalVesting().AmountOf(app.StakingKeeper.BondDenom(ctx))
-
-			// to prevent staking multiple times over the same validator
-			// adjust split amount for the whale account
-			splitAmt := stakeSplitCondition
-			if amt.GT(stakeSplitCondition.MulRaw(int64(validatorLen))) {
-				splitAmt = amt.QuoRaw(int64(validatorLen))
-			}
-
-			// if a vesting account has more staking token than `stakeSplitCondition`,
-			// split staking balance to distribute staking power evenly
-			// Ex) 2_200_000_000_000
-			// stake 1_000_000_000_000 to val1
-			// stake 1_000_000_000_000 to val2
-			// stake 200_000_000_000 to val3
-			for ; amt.GTE(powerReduction); amt = amt.Sub(splitAmt) {
-				validator := validators[i%validatorLen]
-				if _, err := app.StakingKeeper.Delegate(
-					ctx,
-					vestingAcc.GetAddress(),
-					sdk.MinInt(amt, splitAmt),
-					stakingtypes.Unbonded,
-					validator,
-					true,
-				); err != nil {
-					panic(err)
-				}
-
-				// reload validator to avoid power index problem
-				validator, _ = app.StakingKeeper.GetValidator(ctx, validator.GetOperator())
-				validators[i%validatorLen] = validator
-
-				// increase index only when staking happened
-				i++
-			}
-
-		}
-	}
 }

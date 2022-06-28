@@ -42,4 +42,8 @@ const (
 
 	// UpgradeName gov proposal name
 	UpgradeName = "MinCommission"
+
+	// MainnetChainID constants
+	MainnetChainID     = "phoenix-1"
+	MainnetGenesisTime = int64(1653717600)
 )
