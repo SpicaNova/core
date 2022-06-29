@@ -21,9 +21,11 @@ func NewUpgradeHandler(app *TerraApp) UpgradeHandler {
 	return UpgradeHandler{app}
 }
 
+// CreateUpgradeHandler return upgrade handler for software upgrade proposal
 func (h UpgradeHandler) CreateUpgradeHandler() upgradetypes.UpgradeHandler {
 	return func(ctx sdk.Context, _ upgradetypes.Plan, vm module.VersionMap) (module.VersionMap, error) {
-		// Minimum Commission Upgrade h
+		// Minimum Commission Upgrade
+		// check & update all validators commission
 		if err := h.handleMinCommission(ctx); err != nil {
 			return nil, err
 		}
@@ -31,7 +33,7 @@ func (h UpgradeHandler) CreateUpgradeHandler() upgradetypes.UpgradeHandler {
 		if ctx.ChainID() == MainnetChainID {
 			// Remove vesting token from TFL inter-chain account and Ozone wallets
 			// and Send back to community pool
-			if err := h.handleTFLOzoneWalletRemoval(ctx, []string{
+			if err := h.handleFundingCommunityPoolFromTFLOzoneWallets(ctx, []string{
 				"terra1xtlkxkund5xxsj8uj94y6fmx2sf9unkc9l7lpg", // @zon
 				"terra19epdm5jp8vdpm7mvfuflyzys4k0xk5vmgcv0xw", // TFL Finance
 				"terra1zf8s0kq5uzcnm7zkmvjeqrlwfdapgfz007rpx0", // @JeremyDelphi
@@ -49,6 +51,7 @@ func (h UpgradeHandler) CreateUpgradeHandler() upgradetypes.UpgradeHandler {
 			}
 
 			// Allocate community funds to the target addresses and apply vesting with staking
+			// 70% will be vesting (2 year vesting with 6 month cliff)
 			if err := h.tokenAllocateHandler(ctx, MainnetGenesisTime, map[string]int64{
 				"terra1qapv4kngzdrhw3y2y08g0r9776ep5p645sdjyq": int64(1_112_664_830_000), // swissborg
 				"terra10g8ln6ak9hdexje79k0dl5y82fl0g4er52djfh": int64(153_643_860_000),   // hex
@@ -101,22 +104,28 @@ func (h UpgradeHandler) handleMinCommission(ctx sdk.Context) error {
 	return nil
 }
 
-func (h UpgradeHandler) handleTFLOzoneWalletRemoval(ctx sdk.Context, addresses []string) error {
+func (h UpgradeHandler) handleFundingCommunityPoolFromTFLOzoneWallets(ctx sdk.Context, addresses []string) error {
+	bondDenom := h.StakingKeeper.BondDenom(ctx)
 	for _, addr := range addresses {
 		accAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
 			return err
 		}
 
-		// if account not exist, then skip the process
+		// If account not exist, then skip the process
 		account := h.AccountKeeper.GetAccount(ctx, accAddr)
 		if account == nil {
 			continue
 		}
 
+		// The current spendable coins are personal coins,
+		// so should be left after upgrade
+		spendableCoins := h.BankKeeper.SpendableCoins(ctx, accAddr)
+
 		// Unbond all delegation without lock period
 		// this will withdraw all staking rewards
-		unbondedAmount := sdk.ZeroInt()
+		unbondedAmountFromBondedPool := sdk.ZeroInt()
+		unbondedAmountFromNotBondedPool := sdk.ZeroInt()
 		delegations := h.StakingKeeper.GetAllDelegatorDelegations(ctx, accAddr)
 		for _, del := range delegations {
 			amount, err := h.StakingKeeper.Unbond(ctx, accAddr, del.GetValidatorAddr(), del.GetShares())
@@ -124,31 +133,36 @@ func (h UpgradeHandler) handleTFLOzoneWalletRemoval(ctx sdk.Context, addresses [
 				return err
 			}
 
-			unbondedAmount = unbondedAmount.Add(amount)
+			if amount.IsPositive() {
+				if h.StakingKeeper.Validator(ctx, del.GetValidatorAddr()).IsBonded() {
+					unbondedAmountFromBondedPool = unbondedAmountFromBondedPool.Add(amount)
+				} else {
+					unbondedAmountFromNotBondedPool = unbondedAmountFromNotBondedPool.Add(amount)
+				}
+			}
 		}
 
-		unbondedCoins := sdk.NewCoins(sdk.NewCoin(h.StakingKeeper.BondDenom(ctx), unbondedAmount))
-		if unbondedCoins.IsAllPositive() {
+		// Finish unbonding delegations
+		unbondingDelegations := h.StakingKeeper.GetAllUnbondingDelegations(ctx, accAddr)
+		for _, unbonding := range unbondingDelegations {
+			for i, entry := range unbonding.Entries {
+				unbondedAmountFromNotBondedPool = unbondedAmountFromNotBondedPool.Add(entry.Balance)
+				unbonding.RemoveEntry(int64(i))
+			}
+		}
+
+		if unbondedAmountFromBondedPool.IsPositive() {
+			unbondedCoins := sdk.NewCoins(sdk.NewCoin(bondDenom, unbondedAmountFromBondedPool))
 			if err := h.BankKeeper.UndelegateCoinsFromModuleToAccount(
 				ctx, stakingtypes.BondedPoolName, accAddr, unbondedCoins); err != nil {
 				return err
 			}
 		}
 
-		// Finish unbonding delegations
-		unbondingAmount := sdk.ZeroInt()
-		unbondingDelegations := h.StakingKeeper.GetAllUnbondingDelegations(ctx, accAddr)
-		for _, unbonding := range unbondingDelegations {
-			for i, entry := range unbonding.Entries {
-				unbondingAmount = unbondingAmount.Add(entry.Balance)
-				unbonding.RemoveEntry(int64(i))
-			}
-		}
-
-		unbondingCoins := sdk.NewCoins(sdk.NewCoin(h.StakingKeeper.BondDenom(ctx), unbondingAmount))
-		if unbondingCoins.IsAllPositive() {
+		if unbondedAmountFromNotBondedPool.IsPositive() {
+			unbondedCoins := sdk.NewCoins(sdk.NewCoin(bondDenom, unbondedAmountFromNotBondedPool))
 			if err := h.BankKeeper.UndelegateCoinsFromModuleToAccount(
-				ctx, stakingtypes.NotBondedPoolName, accAddr, unbondingCoins); err != nil {
+				ctx, stakingtypes.NotBondedPoolName, accAddr, unbondedCoins); err != nil {
 				return err
 			}
 		}
@@ -163,7 +177,7 @@ func (h UpgradeHandler) handleTFLOzoneWalletRemoval(ctx sdk.Context, addresses [
 
 		// Fund Community Pool
 		allCoins := h.BankKeeper.GetAllBalances(ctx, accAddr)
-		if err := h.DistrKeeper.FundCommunityPool(ctx, allCoins, accAddr); err != nil {
+		if err := h.DistrKeeper.FundCommunityPool(ctx, allCoins.Sub(spendableCoins), accAddr); err != nil {
 			return err
 		}
 	}
@@ -191,7 +205,10 @@ func (h UpgradeHandler) tokenAllocateHandler(ctx sdk.Context, genesisTime int64,
 
 		account := h.AccountKeeper.GetAccount(ctx, accAddr)
 		vestingAccount := account.(*vestingtypes.PeriodicVestingAccount)
+
+		// Increase OriginalVesting
 		vestingAccount.OriginalVesting = vestingAccount.OriginalVesting.Add(sdk.NewCoin(bondDenom, vestingAmount))
+
 		// 2 year vesting with 6 month cliff
 		vestingAccount.StartTime = genesisTime + 60*60*24*30*6
 		vestingAccount.VestingPeriods = vestingtypes.Periods{
@@ -228,9 +245,9 @@ func (h UpgradeHandler) vestingScheduleUpdateHandler(ctx sdk.Context, genesisTim
 			return err
 		}
 
-		// Required tokens are already allocated at genesis
+		// Unlock amount are already allocated at genesis as vesting
 		// but only vesting schedules are not properly set.
-		// Need to unlock tokens from vesting tokens
+		// Need to decrease OriginalVesting to unlock the tokens
 		account := h.AccountKeeper.GetAccount(ctx, accAddr)
 		vestingAccount := account.(*vestingtypes.PeriodicVestingAccount)
 		vestingAccount.OriginalVesting = vestingAccount.OriginalVesting.Sub(
