@@ -43,7 +43,9 @@ const (
 	// UpgradeName gov proposal name
 	UpgradeName = "MinCommission"
 
-	// MainnetChainID constants
-	MainnetChainID     = "phoenix-1"
+	// MainnetChainID Terra v2 mainnet chain ID
+	MainnetChainID = "phoenix-1"
+
+	// MainnetGenesisTime Terra v2 mainnet genesis time for vesting account calculation
 	MainnetGenesisTime = int64(1653717600)
 )

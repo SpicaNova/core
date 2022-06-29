@@ -34,24 +34,22 @@ func (h UpgradeHandler) CreateUpgradeHandler() upgradetypes.UpgradeHandler {
 			// Remove vesting token from TFL inter-chain account and Ozone wallets
 			// and Send back to community pool
 			if err := h.handleFundingCommunityPoolFromTFLOzoneWallets(ctx, []string{
-				"terra1xtlkxkund5xxsj8uj94y6fmx2sf9unkc9l7lpg", // @zon
-				"terra19epdm5jp8vdpm7mvfuflyzys4k0xk5vmgcv0xw", // TFL Finance
-				"terra1zf8s0kq5uzcnm7zkmvjeqrlwfdapgfz007rpx0", // @JeremyDelphi
-				"terra1dyn97p558vchcje0zycwfpex7xc67w4zl62nfy", // @lejimmy
-				"terra1mrutxf7adxg837jl6z85g83pwsn9a2jh3xu9yy", // @Papi
-				"terra16l79rtfr2pjcax50ptxs69zaxzntvg433mtqpc", // Chauncey from Angel
-				"terra1zf8s0kq5uzcnm7zkmvjeqrlwfdapgfz007rpx0", // Jeremy from Delphi
-				"terra1swnt7a6qxmht207ct4l36uetq38zm5nsgkyseu", // Remi from LFG
-				"terra1w38qx5lppk3t57p99p56dln5cwaqxgt8rmxr0e", // Jonathan from Levana
-				"terra19epdm5jp8vdpm7mvfuflyzys4k0xk5vmgcv0xw", // TFL
-				"terra1gawu5a5gmxtfsrkjh034rfy5eclp49seuyxuz8", // Risk Harbor
-				"terra1uckn8fmkx7yuv6asqx7azt2hpu0wnnpd4hvu0x", // Nick from Chronos
+				"terra1xtlkxkund5xxsj8uj94y6fmx2sf9unkc9l7lpg", // TFL Interchain
+				"terra1dyn97p558vchcje0zycwfpex7xc67w4zl62nfy", // TFL Interchain
+				"terra1mrutxf7adxg837jl6z85g83pwsn9a2jh3xu9yy", // TFL Interchain
+				"terra19epdm5jp8vdpm7mvfuflyzys4k0xk5vmgcv0xw", // TFL Interchain + Ozone
+				"terra1zf8s0kq5uzcnm7zkmvjeqrlwfdapgfz007rpx0", // TFL Interchain + Ozone
+				"terra16l79rtfr2pjcax50ptxs69zaxzntvg433mtqpc", // Ozone
+				"terra1swnt7a6qxmht207ct4l36uetq38zm5nsgkyseu", // Ozone
+				"terra1w38qx5lppk3t57p99p56dln5cwaqxgt8rmxr0e", // Ozone
+				"terra1gawu5a5gmxtfsrkjh034rfy5eclp49seuyxuz8", // Ozone
+				"terra1uckn8fmkx7yuv6asqx7azt2hpu0wnnpd4hvu0x", // Ozone
 			}); err != nil {
 				return nil, err
 			}
 
-			// Allocate community funds to the target addresses and apply vesting with staking
-			// 70% will be vesting (2 year vesting with 6 month cliff)
+			// Allocate community funds to the target addresses.
+			// 70% of allocated funds will be vesting (2 year vesting with 6 month cliff)
 			if err := h.tokenAllocateHandler(ctx, MainnetGenesisTime, map[string]int64{
 				"terra1qapv4kngzdrhw3y2y08g0r9776ep5p645sdjyq": int64(1_112_664_830_000), // swissborg
 				"terra10g8ln6ak9hdexje79k0dl5y82fl0g4er52djfh": int64(153_643_860_000),   // hex

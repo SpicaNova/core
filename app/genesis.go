@@ -53,6 +53,7 @@ func (genState GenesisState) ConfigureBondDenom(cdc codec.JSONCodec, bondDenom s
 	return genState
 }
 
+// ConfigureICA configures ICA module genesis
 func (genState GenesisState) ConfigureICA(cdc codec.JSONCodec) GenesisState {
 	// create ICS27 Controller submodule params
 	controllerParams := icacontrollertypes.Params{}
