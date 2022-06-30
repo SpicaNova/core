@@ -9,7 +9,7 @@ import (
 // Ante params default values
 var (
 	// Default minimum commission value
-	DefaultMinimumCommission sdk.Dec = sdk.NewDecWithPrec(10, 2) // 10%
+	DefaultMinimumCommission sdk.Dec = sdk.NewDecWithPrec(10, 2) // 5%
 )
 
 // NewGenesisState return new GenesisState instance
